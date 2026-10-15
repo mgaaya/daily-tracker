@@ -26,7 +26,7 @@
   .score{text-align:right;}
   .score .num{font-family:'IBM Plex Mono',monospace;font-size:2.2rem;font-weight:600;line-height:1;color:var(--accent-green);}
   .score .label{font-size:0.72rem;color:var(--text-dim);margin-top:2px;}
-  .nav-row{display:flex;align-items:center;gap:8px;margin-bottom:18px;font-size:0.78rem;color:var(--text-dim);}
+  .nav-row{display:flex;align-items:center;gap:8px;margin-bottom:18px;font-size:0.78rem;color:var(--text-dim);flex-wrap:wrap;}
   .nav-row button{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 10px;font-size:0.75rem;cursor:pointer;}
   .nav-row button:hover{border-color:var(--accent-blue);}
   .nav-row button:disabled{opacity:0.35;cursor:default;}
@@ -55,10 +55,12 @@
   .order-btns button{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:0.65rem;line-height:1;padding:2px;}
   .order-btns button:hover{color:var(--accent-blue);}
   .add-row{display:flex;gap:8px;padding:12px 2px 2px;}
-  .add-row input{flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:9px 10px;font-family:'IBM Plex Sans',sans-serif;font-size:0.88rem;}
-  .add-row input:focus{outline:1px solid var(--accent-blue);}
-  .add-row button{background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:9px 16px;font-size:0.85rem;cursor:pointer;}
-  .add-row button:hover{border-color:var(--accent-blue);}
+  .add-row input, .login input{flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:9px 10px;font-family:'IBM Plex Sans',sans-serif;font-size:0.88rem;}
+  .add-row input:focus, .login input:focus{outline:1px solid var(--accent-blue);}
+  .add-row button, .login button{background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:9px 16px;font-size:0.85rem;cursor:pointer;}
+  .add-row button:hover, .login button:hover{border-color:var(--accent-blue);}
+  .login{display:flex;flex-direction:column;gap:10px;margin-top:20px;}
+  .err{color:var(--danger);font-size:0.8rem;min-height:1em;}
   .past-note{padding:12px 2px;color:var(--text-dim);font-size:0.78rem;}
   .empty{padding:20px 2px;color:var(--text-dim);font-size:0.88rem;}
   .archived-list{margin:8px 0 20px;}
@@ -77,218 +79,202 @@
   .panel-body{margin-top:12px;font-size:0.85rem;color:var(--text-dim);}
   .settings-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;font-size:0.85rem;}
   .settings-row input[type="number"]{width:60px;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 6px;font-family:'IBM Plex Mono',monospace;}
-  .backup-row{display:flex;gap:8px;margin-top:4px;}
+  .backup-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
   .backup-row button{background:var(--surface-2);border:1px solid var(--border);color:var(--text);padding:8px 14px;font-size:0.8rem;cursor:pointer;}
   .backup-row button:hover{border-color:var(--accent-blue);}
   .saved-note{font-size:0.68rem;color:var(--text-dim);margin-top:8px;font-family:'IBM Plex Mono',monospace;}
+  .saved-note.bad{color:var(--danger);}
   .install-hint{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);font-size:0.75rem;color:var(--text-dim);display:none;}
   .install-hint.show{display:block;}
   .install-hint button{background:none;border:1px solid var(--accent-blue);color:var(--accent-blue);padding:6px 12px;font-size:0.75rem;cursor:pointer;margin-top:8px;}
+  .note{color:var(--text-dim);font-size:0.88rem;line-height:1.5;margin-top:16px;}
+  code{font-family:'IBM Plex Mono',monospace;background:var(--surface-2);padding:1px 5px;}
 </style>
 </head>
 <body>
 <div class="wrap" id="app"></div>
 <input type="file" id="import-file" accept="application/json" style="display:none">
 
+<script src="config.js"></script>
+<script src="supabase.js"></script>
 <script>
-const STORAGE_KEY = 'daily-tracker-data';
-let data = { tasks: [], completions: {}, settings: { threshold: 0.8, graceDay: true }, updatedAt: 0 };
-let showSync = false;
-let sync = { token:'', gistId:'' };
-let syncStatus = '';
-let syncTimer = null;
-const GIST_FILE = 'daily-tracker.json';
-let viewingDate = todayKey();
-let showArchived = false;
-let showSettings = false;
-let showBackup = false;
-let lastSavedAt = null;
-let deferredPrompt = null;
+const APP_VERSION = 6;
+const CFG = window.APP_CONFIG || {};
 
+let sb = null, session = null, loaded = false;
+let data = blankData();
+let viewingDate = todayKey();
+let showArchived = false, showSettings = false, showBackup = false, showAccount = false;
+let statusMsg = '', statusBad = false, deferredPrompt = null;
+let writeChain = Promise.resolve();
+
+function blankData(){ return { tasks: [], completions: {}, settings: { threshold: 0.8, graceDay: true } }; }
 function todayKey(){ return formatKey(new Date()); }
 function formatKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function parseKey(key){ const [y,m,d] = key.split('-').map(Number); return new Date(y, m-1, d); }
-function daysBetween(key1, key2){ return Math.round((parseKey(key2)-parseKey(key1))/86400000); }
+function daysBetween(k1, k2){ return Math.round((parseKey(k2)-parseKey(k1))/86400000); }
 function dateLabelFor(key){ return parseKey(key).toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'}); }
 function isEditable(key){ const diff = daysBetween(key, todayKey()); return diff>=0 && diff<=6; }
-
-function normalize(d){
-  if(!d.tasks) d.tasks = [];
-  if(!d.completions) d.completions = {};
-  if(!d.settings) d.settings = { threshold: 0.8, graceDay: true };
-  if(!d.updatedAt) d.updatedAt = 0;
-  d.tasks.forEach((t,i) => { if(t.order===undefined) t.order = i; if(t.archived===undefined) t.archived=false; });
-  return d;
+function escapeHtml(s){ const div=document.createElement('div'); div.textContent=s; return div.innerHTML; }
+function isUuid(s){ return typeof s==='string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s); }
+function newId(){
+  if(window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r=Math.random()*16|0; return (c==='x'?r:(r&3|8)).toString(16); });
 }
-function load(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw){ data = normalize(JSON.parse(raw)); }
-  }catch(e){}
+function cfgOk(){
+  return !!(CFG.SUPABASE_URL && CFG.SUPABASE_KEY && CFG.SUPABASE_URL.indexOf('YOUR-PROJECT')===-1 && CFG.SUPABASE_KEY.indexOf('YOUR-')===-1);
 }
-function save(){
-  try{ data.updatedAt = Date.now(); localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); lastSavedAt = new Date(); }
-  catch(e){ console.error(e); }
-  scheduleSync();
-}
-
-/* ---------- Sync via private GitHub Gist ---------- */
-function loadSyncConfig(){ try{ const raw=localStorage.getItem('daily-tracker-sync'); if(raw) sync=JSON.parse(raw); }catch(e){} }
-function saveSyncConfig(){ localStorage.setItem('daily-tracker-sync', JSON.stringify(sync)); }
-function ghFetch(path, opts){
-  opts = opts || {};
-  return fetch('https://api.github.com'+path, Object.assign({ cache:'no-store' }, opts, { headers:{ 'Authorization':'Bearer '+sync.token, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json' } }));
-}
-async function findGist(){
-  for(let page=1; page<=5; page++){
-    const r = await ghFetch('/gists?per_page=100&page='+page);
-    if(!r.ok) throw new Error('GitHub '+r.status);
-    const list = await r.json();
-    const g = list.find(g => g.files && g.files[GIST_FILE]);
-    if(g) return g.id;
-    if(list.length < 100) break;
-  }
-  return null;
-}
-async function pullGist(){
-  const r = await ghFetch('/gists/'+sync.gistId);
-  if(!r.ok) throw new Error('GitHub '+r.status);
-  const g = await r.json();
-  const f = g.files && g.files[GIST_FILE];
-  if(!f) return null;
-  let content = f.content;
-  if(f.truncated){ content = await (await fetch(f.raw_url)).text(); }
-  return JSON.parse(content);
-}
-async function pushGist(){
-  const content = JSON.stringify(data);
-  if(sync.gistId){
-    const r = await ghFetch('/gists/'+sync.gistId, { method:'PATCH', body: JSON.stringify({ files:{ [GIST_FILE]:{ content } } }) });
-    if(!r.ok) throw new Error('GitHub '+r.status);
-  } else {
-    const r = await ghFetch('/gists', { method:'POST', body: JSON.stringify({ description:'Daily Tracker data', public:false, files:{ [GIST_FILE]:{ content } } }) });
-    if(!r.ok) throw new Error('GitHub '+r.status);
-    sync.gistId = (await r.json()).id; saveSyncConfig();
-  }
-}
-function setSyncStatus(msg){
-  syncStatus = msg;
+function setStatus(msg, bad){
+  statusMsg = msg; statusBad = !!bad;
   const el = document.getElementById('sync-status');
-  if(el) el.textContent = msg;
+  if(el){ el.textContent = msg; el.className = 'saved-note' + (bad?' bad':''); }
 }
-function scheduleSync(){
-  if(!sync.token) return;
-  clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => { syncTimer = null; syncNow(); }, 2000);
+function timeNow(){ return new Date().toLocaleTimeString(); }
+
+/* ---------- database mapping ---------- */
+function taskRow(t){ return { id:t.id, name:t.name, position:t.order, archived:t.archived, created_on:t.createdOn, archived_on:t.archivedOn||null }; }
+function fromTaskRow(r){ return { id:r.id, name:r.name, order:r.position, archived:r.archived, createdOn:r.created_on, archivedOn:r.archived_on||null }; }
+
+async function loadAll(){
+  const t = await sb.from('tasks').select('*').order('position');
+  if(t.error) throw t.error;
+  const comps = {};
+  let from = 0;
+  while(true){
+    const r = await sb.from('completions').select('task_id,day').order('day').order('task_id').range(from, from+999);
+    if(r.error) throw r.error;
+    r.data.forEach(c => { (comps[c.day] = comps[c.day] || {})[c.task_id] = true; });
+    if(r.data.length < 1000) break;
+    from += 1000;
+  }
+  const s = await sb.from('settings').select('*').maybeSingle();
+  if(s.error) throw s.error;
+  data = {
+    tasks: t.data.map(fromTaskRow),
+    completions: comps,
+    settings: s.data ? { threshold: s.data.threshold/100, graceDay: s.data.grace_day } : { threshold: 0.8, graceDay: true }
+  };
+  loaded = true;
 }
-async function syncNow(){
-  if(!sync.token) return;
-  clearTimeout(syncTimer); syncTimer = null;
-  setSyncStatus('syncing…');
-  try{
-    let remoteTs = -1;
-    if(!sync.gistId){ sync.gistId = (await findGist()) || ''; saveSyncConfig(); }
-    if(sync.gistId){
-      const remote = await pullGist();
-      if(remote && remote.tasks){
-        remoteTs = remote.updatedAt || 0;
-        if(remoteTs > (data.updatedAt || 0)){
-          data = normalize(remote);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-          setSyncStatus('pulled newer data at '+new Date().toLocaleTimeString());
-          render(); return;
-        }
-      }
+async function refresh(){
+  if(!sb || !session) return;
+  setStatus('loading…');
+  try{ await loadAll(); setStatus('up to date at '+timeNow()); render(); }
+  catch(e){ setStatus('could not load: '+(e.message||e), true); render(); }
+}
+// Runs writes one after another. If a write fails, the screen is reloaded from the database
+// so you never keep looking at something that was not actually saved.
+function write(factory){
+  writeChain = writeChain.then(async () => {
+    try{
+      const r = await factory();
+      (Array.isArray(r)?r:[r]).forEach(x => { if(x && x.error) throw x.error; });
+      setStatus('saved at '+timeNow());
+    }catch(e){
+      setStatus('NOT saved: '+(e.message||e)+' — reloading from the database', true);
+      try{ await loadAll(); }catch(e2){}
+      render();
     }
-    if((data.updatedAt || 0) > remoteTs){
-      await pushGist();
-      setSyncStatus('pushed at '+new Date().toLocaleTimeString());
-    } else {
-      setSyncStatus('up to date at '+new Date().toLocaleTimeString());
-    }
-  }catch(e){ setSyncStatus('sync failed: '+e.message); }
-}
-function flushSync(){
-  if(!sync.token || !sync.gistId || !syncTimer) return;
-  clearTimeout(syncTimer); syncTimer = null;
-  try{
-    ghFetch('/gists/'+sync.gistId, { method:'PATCH', keepalive:true, body: JSON.stringify({ files:{ [GIST_FILE]:{ content: JSON.stringify(data) } } }) });
-  }catch(e){}
+  });
+  return writeChain;
 }
 
+/* ---------- tasks ---------- */
 function activeTasks(){ return data.tasks.filter(t=>!t.archived).sort((a,b)=>a.order-b.order); }
 function archivedTasks(){ return data.tasks.filter(t=>t.archived); }
+function appliesOn(t, key){ return t.createdOn <= key && (!t.archivedOn || key < t.archivedOn); }
 function tasksForDate(key){
   const done = data.completions[key] || {};
-  return data.tasks.filter(t => !t.archived || done[t.id]).sort((a,b)=>a.order-b.order);
+  return data.tasks.filter(t => appliesOn(t,key) || done[t.id]).sort((a,b)=>a.order-b.order);
 }
 function scoreForDate(key){
   const list = tasksForDate(key);
   if(list.length===0) return null;
   const done = data.completions[key] || {};
-  const completed = list.filter(t=>done[t.id]).length;
-  return completed/list.length;
+  return list.filter(t=>done[t.id]).length / list.length;
 }
 
 function addTask(name){
   name = name.trim();
   if(!name) return;
   const maxOrder = data.tasks.reduce((m,t)=>Math.max(m,t.order||0), -1);
-  data.tasks.push({ id:'t'+Date.now()+Math.random().toString(16).slice(2), name, archived:false, order:maxOrder+1 });
-  save(); render();
+  const t = { id:newId(), name, order:maxOrder+1, archived:false, createdOn:todayKey(), archivedOn:null };
+  data.tasks.push(t); render();
+  write(() => sb.from('tasks').insert(taskRow(t)));
 }
-function archiveTask(id){ const t=data.tasks.find(t=>t.id===id); if(t){ t.archived=true; save(); render(); } }
-function restoreTask(id){ const t=data.tasks.find(t=>t.id===id); if(t){ t.archived=false; save(); render(); } }
+function archiveTask(id){
+  const t = data.tasks.find(t=>t.id===id); if(!t) return;
+  t.archived = true; t.archivedOn = todayKey(); render();
+  write(() => sb.from('tasks').update({ archived:true, archived_on:t.archivedOn }).eq('id', id));
+}
+function restoreTask(id){
+  const t = data.tasks.find(t=>t.id===id); if(!t) return;
+  t.archived = false; t.archivedOn = null; render();
+  write(() => sb.from('tasks').update({ archived:false, archived_on:null }).eq('id', id));
+}
 function deleteForever(id){
-  if(confirm('Permanently delete this task and its history entry references? This cannot be undone.')){
-    data.tasks = data.tasks.filter(t=>t.id!==id);
-    save(); render();
-  }
+  if(!confirm('Permanently delete this task and all its history? This cannot be undone.')) return;
+  data.tasks = data.tasks.filter(t=>t.id!==id);
+  Object.keys(data.completions).forEach(d => { delete data.completions[d][id]; });
+  render();
+  write(() => sb.from('tasks').delete().eq('id', id));
 }
 function moveTask(id, dir){
   const list = activeTasks();
   const idx = list.findIndex(t=>t.id===id);
   const swapIdx = dir==='up' ? idx-1 : idx+1;
-  if(swapIdx<0 || swapIdx>=list.length) return;
+  if(idx<0 || swapIdx<0 || swapIdx>=list.length) return;
   const a = list[idx], b = list[swapIdx];
   const tmp = a.order; a.order = b.order; b.order = tmp;
-  save(); render();
+  render();
+  write(() => Promise.all([
+    sb.from('tasks').update({ position:a.order }).eq('id', a.id),
+    sb.from('tasks').update({ position:b.order }).eq('id', b.id)
+  ]));
 }
 function toggleTask(id){
   if(!isEditable(viewingDate)) return;
-  if(!data.completions[viewingDate]) data.completions[viewingDate] = {};
-  data.completions[viewingDate][id] = !data.completions[viewingDate][id];
-  save(); render();
+  const day = viewingDate;
+  if(!data.completions[day]) data.completions[day] = {};
+  if(data.completions[day][id]){
+    delete data.completions[day][id]; render();
+    write(() => sb.from('completions').delete().eq('task_id', id).eq('day', day));
+  } else {
+    data.completions[day][id] = true; render();
+    write(() => sb.from('completions').upsert({ task_id:id, day }));
+  }
+}
+function saveSettings(){
+  const row = { user_id: session.user.id, threshold: Math.round(data.settings.threshold*100), grace_day: data.settings.graceDay };
+  write(() => sb.from('settings').upsert(row));
 }
 
+/* ---------- stats ---------- */
 function computeStreak(){
-  const threshold = data.settings.threshold;
-  const grace = data.settings.graceDay;
+  const threshold = data.settings.threshold, grace = data.settings.graceDay;
   let streak = 0, graceUsed = 0, walked = 0;
   let d = new Date();
   while(true){
     const key = formatKey(d);
     const score = scoreForDate(key);
     const passes = score !== null && score >= threshold;
-    const isToday = key === todayKey();
     if(passes){ streak++; }
-    else if(isToday){ /* today incomplete doesn't break streak yet */ }
+    else if(key === todayKey()){ /* today incomplete doesn't break the streak yet */ }
     else if(grace && graceUsed < 1){ graceUsed++; }
     else break;
     walked++;
     if(walked % 7 === 0) graceUsed = 0;
     d.setDate(d.getDate()-1);
+    if(walked > 1000) break;
   }
   return streak;
 }
 function bestStreak(){
-  const threshold = data.settings.threshold;
-  const grace = data.settings.graceDay;
+  const threshold = data.settings.threshold, grace = data.settings.graceDay;
   let best=0, cur=0, graceUsed=0;
   let d = new Date(); d.setDate(d.getDate()-365);
   for(let i=0;i<366;i++){
-    const key = formatKey(d);
-    const score = scoreForDate(key);
+    const score = scoreForDate(formatKey(d));
     const passes = score !== null && score >= threshold;
     if(passes){ cur++; best=Math.max(best,cur); }
     else if(grace && graceUsed<1){ graceUsed++; }
@@ -305,10 +291,10 @@ function avgOverDays(n){
     if(score!==null){ total+=score; count++; }
     d.setDate(d.getDate()-1);
   }
-  return count? Math.round((total/count)*100) : null;
+  return count ? Math.round((total/count)*100) : null;
 }
 function cellColor(score){
-  if(score===null) return 'var(--surface-2)';
+  if(score===null || score===0) return 'var(--surface-2)';
   if(score>=1) return 'var(--accent-green)';
   if(score>=0.6) return '#5C8A59';
   if(score>=0.3) return '#3E5C3E';
@@ -321,46 +307,102 @@ function buildHeatmap(){
   const d = new Date(start);
   while(d<=end){
     const key = formatKey(d);
-    const score = key<=todayKey() ? scoreForDate(key) : null;
-    cells.push({ key, score, future: key>todayKey() });
+    cells.push({ key, score: key<=todayKey() ? scoreForDate(key) : null, future: key>todayKey() });
     d.setDate(d.getDate()+1);
   }
   return cells;
 }
-function escapeHtml(s){ const div=document.createElement('div'); div.textContent=s; return div.innerHTML; }
 
+/* ---------- export / import ---------- */
 function exportData(){
-  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+  const out = { app:'daily-tracker', version:APP_VERSION, tasks:data.tasks, completions:data.completions, settings:data.settings };
+  const blob = new Blob([JSON.stringify(out,null,2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href=url; a.download = 'daily-tracker-backup-'+todayKey()+'.json'; a.click();
+  a.href = url; a.download = 'daily-tracker-backup-'+todayKey()+'.json'; a.click();
   URL.revokeObjectURL(url);
 }
 function importDataFromFile(file){
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
+    let parsed;
+    try{ parsed = JSON.parse(e.target.result); if(!Array.isArray(parsed.tasks) || !parsed.completions) throw new Error('bad'); }
+    catch(err){ alert('This does not look like a valid backup file.'); return; }
+    if(!confirm('Add the tasks and history from this backup to your account?')) return;
+    const firstDay = {};
+    Object.keys(parsed.completions).sort().forEach(day => {
+      Object.keys(parsed.completions[day]).forEach(id => { if(parsed.completions[day][id] && !firstDay[id]) firstDay[id] = day; });
+    });
+    const idMap = {}, taskRows = [], compRows = [];
+    parsed.tasks.forEach((t,i) => {
+      const nid = isUuid(t.id) ? t.id : newId();
+      idMap[t.id] = nid;
+      taskRows.push({ user_id:session.user.id, id:nid, name:t.name, position: (t.order!==undefined?t.order:i), archived:!!t.archived,
+        created_on: t.createdOn || firstDay[t.id] || todayKey(), archived_on: t.archivedOn || (t.archived ? todayKey() : null) });
+    });
+    Object.keys(parsed.completions).forEach(day => {
+      Object.keys(parsed.completions[day]).forEach(id => { if(parsed.completions[day][id] && idMap[id]) compRows.push({ user_id:session.user.id, task_id:idMap[id], day }); });
+    });
+    setStatus('importing…');
     try{
-      const parsed = JSON.parse(e.target.result);
-      if(!parsed.tasks || !parsed.completions) throw new Error('bad format');
-      if(confirm('This replaces your current data with the imported backup. Continue?')){
-        data = parsed;
-        if(!data.settings) data.settings = { threshold:0.8, graceDay:true };
-        data.tasks.forEach((t,i)=>{ if(t.order===undefined) t.order=i; if(t.archived===undefined) t.archived=false; });
-        viewingDate = todayKey();
-        save(); render();
+      if(taskRows.length){ const r = await sb.from('tasks').upsert(taskRows); if(r.error) throw r.error; }
+      for(let i=0;i<compRows.length;i+=500){
+        const r = await sb.from('completions').upsert(compRows.slice(i,i+500)); if(r.error) throw r.error;
       }
-    }catch(err){ alert('Could not read this file as a valid backup.'); }
+      await loadAll(); setStatus('imported '+taskRows.length+' tasks at '+timeNow()); render();
+    }catch(err){ setStatus('import failed: '+(err.message||err), true); }
   };
   reader.readAsText(file);
 }
 
+/* ---------- auth ---------- */
+async function doSignIn(email, password){
+  const r = await sb.auth.signInWithPassword({ email, password });
+  if(r.error) return r.error.message;
+  session = (await sb.auth.getSession()).data.session;
+  render();
+  await refresh();
+  return '';
+}
+async function doSignOut(){
+  await sb.auth.signOut();
+  session = null; data = blankData(); loaded = false; render();
+}
+
+/* ---------- rendering ---------- */
 function render(){
   const app = document.getElementById('app');
+  if(!cfgOk()) return renderSetup(app);
+  if(!session) return renderLogin(app);
+  if(!loaded) { app.innerHTML = '<div class="note">Loading…</div><div class="saved-note'+(statusBad?' bad':'')+'" id="sync-status">'+escapeHtml(statusMsg)+'</div>'; return; }
+  renderApp(app);
+}
+function renderSetup(app){
+  app.innerHTML = `<div class="top"><div><h1>Daily Tracker</h1><div class="date">setup needed</div></div></div>
+    <p class="note">Open <code>config.js</code> and paste in your Supabase project URL and public key, then reload this page.</p>`;
+}
+function renderLogin(app){
+  app.innerHTML = `<div class="top"><div><h1>Daily Tracker</h1><div class="date">sign in to continue</div></div></div>
+    <div class="login">
+      <input type="email" id="login-email" placeholder="Email" autocomplete="username">
+      <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password">
+      <button id="login-btn">Sign in</button>
+      <div class="err" id="login-err"></div>
+    </div>`;
+  const go = async () => {
+    const btn = document.getElementById('login-btn'); btn.disabled = true;
+    const msg = await doSignIn(document.getElementById('login-email').value.trim(), document.getElementById('login-pass').value);
+    const err = document.getElementById('login-err'); if(err) err.textContent = msg;
+    if(btn) btn.disabled = false;
+  };
+  document.getElementById('login-btn').addEventListener('click', go);
+  document.getElementById('login-pass').addEventListener('keydown', (e) => { if(e.key==='Enter') go(); });
+}
+function renderApp(app){
+  const keepTyped = (document.getElementById('new-task')||{}).value || '';
   const pct = Math.round((scoreForDate(viewingDate)||0)*100);
-  const streak = computeStreak();
-  const best = bestStreak();
-  const avg7 = avgOverDays(7);
-  const avg30 = avgOverDays(30);
+  const streak = computeStreak(), best = bestStreak();
+  const avg7 = avgOverDays(7), avg30 = avgOverDays(30);
   const cells = buildHeatmap();
   const editable = isEditable(viewingDate);
   const isToday = viewingDate === todayKey();
@@ -368,19 +410,18 @@ function render(){
 
   let tasksHtml = '';
   if(list.length===0){
-    tasksHtml = '<div class="empty">'+(isToday? 'No tasks yet. Add the things you want to do every day below.' : 'No tasks recorded for this day.')+'</div>';
+    tasksHtml = '<div class="empty">'+(isToday ? 'No tasks yet. Add the things you want to do every day below.' : 'No tasks recorded for this day.')+'</div>';
   } else {
     const done = data.completions[viewingDate] || {};
     tasksHtml = list.map(t => {
       const isDone = !!done[t.id];
-      const canToggle = editable;
       const orderCtrls = (isToday && !t.archived) ? `<div class="order-btns"><button data-up="${t.id}">▲</button><button data-down="${t.id}">▼</button></div>` : '';
       const delBtn = (isToday && !t.archived) ? `<button class="del" data-del="${t.id}">remove</button>` : '';
       const archTag = t.archived ? '<span class="tag">archived</span>' : '';
       return `<div class="task">
         ${orderCtrls}
-        <div class="box ${isDone?'done':''} ${canToggle?'':'disabled'}" ${canToggle?`data-toggle="${t.id}"`:''}></div>
-        <div class="name ${isDone?'done':''}" ${canToggle?`data-toggle="${t.id}"`:''}>${escapeHtml(t.name)}</div>
+        <div class="box ${isDone?'done':''} ${editable?'':'disabled'}" ${editable?`data-toggle="${t.id}"`:''}></div>
+        <div class="name ${isDone?'done':''}" ${editable?`data-toggle="${t.id}"`:''}>${escapeHtml(t.name)}</div>
         ${archTag}${delBtn}
       </div>`;
     }).join('');
@@ -394,7 +435,7 @@ function render(){
 
   const archived = archivedTasks();
   const archivedHtml = archived.length===0 ? '' : `
-    <div class="archived-list ${showArchived?'':'hidden'}" style="${showArchived?'':'display:none'}">
+    <div class="archived-list" style="${showArchived?'':'display:none'}">
       ${archived.map(t=>`<div class="task"><span style="flex:1;color:var(--text-dim)">${escapeHtml(t.name)}</span><button class="restore" data-restore="${t.id}">restore</button><button class="del" style="opacity:1" data-forget="${t.id}">delete forever</button></div>`).join('')}
     </div>`;
 
@@ -413,8 +454,8 @@ function render(){
     <div class="nav-row">
       <button id="nav-prev">&larr; prev day</button>
       <button id="nav-next" ${isToday?'disabled':''}>next day &rarr;</button>
-      ${!isToday? '<button id="nav-today">back to today</button>':''}
-      <span class="badge ${editable?'':'readonly'}">${editable? 'editable':'read-only'}</span>
+      ${!isToday ? '<button id="nav-today">back to today</button>' : ''}
+      <span class="badge ${editable?'':'readonly'}">${editable?'editable':'read-only'}</span>
     </div>
 
     <div class="stat-row">
@@ -425,12 +466,12 @@ function render(){
     </div>
 
     <p class="section-label">
-      <span>${isToday? "Today's tasks" : 'Tasks that day'}</span>
-      ${archived.length? `<button class="link" id="toggle-archived">${showArchived?'hide':'show'} archived (${archived.length})</button>`:''}
+      <span>${isToday ? "Today's tasks" : 'Tasks that day'}</span>
+      ${archived.length ? `<button class="link" id="toggle-archived">${showArchived?'hide':'show'} archived (${archived.length})</button>` : ''}
     </p>
     <div class="tasks">${tasksHtml}</div>
     ${archivedHtml}
-    ${isToday? `<div class="add-row">
+    ${isToday ? `<div class="add-row">
       <input type="text" id="new-task" placeholder="Add a daily task…" maxlength="80">
       <button id="add-btn">Add</button>
     </div>` : `<div class="past-note">Only the last 7 days can be edited. Add new tasks from today's view.</div>`}
@@ -448,53 +489,34 @@ function render(){
     </div>
 
     <div class="panel">
-      <div class="panel-toggle" id="settings-toggle">
-        <p class="section-label">Settings</p>
-        <span style="color:var(--text-dim);font-size:0.8rem;">${showSettings?'▲':'▼'}</span>
-      </div>
+      <div class="panel-toggle" id="settings-toggle"><p class="section-label">Settings</p><span style="color:var(--text-dim);font-size:0.8rem;">${showSettings?'▲':'▼'}</span></div>
       <div class="panel-body" style="${showSettings?'':'display:none'}">
-        <div class="settings-row">
-          <span>Streak threshold</span>
-          <span><input type="number" id="threshold-input" min="50" max="100" step="5" value="${Math.round(data.settings.threshold*100)}"> %</span>
-        </div>
-        <div class="settings-row">
-          <span>Allow 1 grace day per week</span>
-          <input type="checkbox" id="grace-input" ${data.settings.graceDay?'checked':''}>
-        </div>
+        <div class="settings-row"><span>Streak threshold</span><span><input type="number" id="threshold-input" min="50" max="100" step="5" value="${Math.round(data.settings.threshold*100)}"> %</span></div>
+        <div class="settings-row"><span>Allow 1 grace day per week</span><input type="checkbox" id="grace-input" ${data.settings.graceDay?'checked':''}></div>
       </div>
     </div>
 
     <div class="panel">
-      <div class="panel-toggle" id="sync-toggle">
-        <p class="section-label">Sync between devices</p>
-        <span style="color:var(--text-dim);font-size:0.8rem;">${showSync?'▲':'▼'}</span>
-      </div>
-      <div class="panel-body" style="${showSync?'':'display:none'}">
-        <div>Syncs your data through a private GitHub Gist on your account. Paste a GitHub token (classic, with only the <b>gist</b> scope) on each device.</div>
-        <div class="add-row" style="padding-left:0;padding-right:0;">
-          <input type="password" id="token-input" placeholder="GitHub token" value="${escapeHtml(sync.token)}" autocomplete="off">
-          <button id="token-save">${sync.token?'Update':'Connect'}</button>
-        </div>
+      <div class="panel-toggle" id="account-toggle"><p class="section-label">Account</p><span style="color:var(--text-dim);font-size:0.8rem;">${showAccount?'▲':'▼'}</span></div>
+      <div class="panel-body" style="${showAccount?'':'display:none'}">
+        <div>Signed in as <b>${escapeHtml((session.user && session.user.email) || '')}</b></div>
         <div class="backup-row">
-          <button id="sync-now-btn">Sync now</button>
-          ${sync.token?'<button id="sync-off-btn">Disconnect</button>':''}
+          <button id="refresh-btn">Refresh from database</button>
+          <button id="signout-btn">Sign out</button>
         </div>
-        <div class="saved-note" id="sync-status">${escapeHtml(syncStatus || (sync.token?'connected':'not connected'))}</div>
+        <div class="saved-note ${statusBad?'bad':''}" id="sync-status">${escapeHtml(statusMsg)}</div>
+        <div class="saved-note">app version ${APP_VERSION}</div>
       </div>
     </div>
 
     <div class="panel">
-      <div class="panel-toggle" id="backup-toggle">
-        <p class="section-label">Backup &amp; restore</p>
-        <span style="color:var(--text-dim);font-size:0.8rem;">${showBackup?'▲':'▼'}</span>
-      </div>
+      <div class="panel-toggle" id="backup-toggle"><p class="section-label">Backup &amp; restore</p><span style="color:var(--text-dim);font-size:0.8rem;">${showBackup?'▲':'▼'}</span></div>
       <div class="panel-body" style="${showBackup?'':'display:none'}">
-        <div>Your data lives only in this browser. Export a backup regularly in case you clear your browser data or switch devices.</div>
+        <div>Your data is stored in your online database. You can still download a copy, or add tasks and history from an older backup file.</div>
         <div class="backup-row">
           <button id="export-btn">Export backup (.json)</button>
           <button id="import-btn">Import backup</button>
         </div>
-        ${lastSavedAt? `<div class="saved-note">last saved ${lastSavedAt.toLocaleTimeString()}</div>`:''}
       </div>
     </div>
 
@@ -503,6 +525,8 @@ function render(){
       <br><button id="install-btn">Install app</button>
     </div>
   `;
+
+  const nt = document.getElementById('new-task'); if(nt && keepTyped) nt.value = keepTyped;
 
   document.querySelectorAll('[data-toggle]').forEach(el => el.addEventListener('click', () => toggleTask(el.getAttribute('data-toggle'))));
   document.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', () => archiveTask(el.getAttribute('data-del'))));
@@ -514,8 +538,8 @@ function render(){
 
   const addBtn = document.getElementById('add-btn');
   if(addBtn){
-    addBtn.addEventListener('click', () => { const i=document.getElementById('new-task'); addTask(i.value); i.value=''; i.focus(); });
-    document.getElementById('new-task').addEventListener('keydown', (e) => { if(e.key==='Enter'){ addTask(e.target.value); e.target.value=''; } });
+    addBtn.addEventListener('click', () => { const i=document.getElementById('new-task'); const v=i.value; i.value=''; addTask(v); const j=document.getElementById('new-task'); if(j) j.focus(); });
+    document.getElementById('new-task').addEventListener('keydown', (e) => { if(e.key==='Enter'){ const v=e.target.value; e.target.value=''; addTask(v); const j=document.getElementById('new-task'); if(j) j.focus(); } });
   }
   const toggleArch = document.getElementById('toggle-archived');
   if(toggleArch) toggleArch.addEventListener('click', () => { showArchived=!showArchived; render(); });
@@ -527,29 +551,20 @@ function render(){
   if(navToday) navToday.addEventListener('click', () => { viewingDate=todayKey(); render(); });
 
   document.getElementById('settings-toggle').addEventListener('click', () => { showSettings=!showSettings; render(); });
+  document.getElementById('account-toggle').addEventListener('click', () => { showAccount=!showAccount; render(); });
   document.getElementById('backup-toggle').addEventListener('click', () => { showBackup=!showBackup; render(); });
   const thresholdInput = document.getElementById('threshold-input');
   if(thresholdInput) thresholdInput.addEventListener('change', (e) => {
     let v = parseInt(e.target.value,10); if(isNaN(v)) v=80; v=Math.min(100,Math.max(50,v));
-    data.settings.threshold = v/100; save(); render();
+    data.settings.threshold = v/100; saveSettings(); render();
   });
   const graceInput = document.getElementById('grace-input');
-  if(graceInput) graceInput.addEventListener('change', (e) => { data.settings.graceDay = e.target.checked; save(); render(); });
+  if(graceInput) graceInput.addEventListener('change', (e) => { data.settings.graceDay = e.target.checked; saveSettings(); render(); });
 
-  document.getElementById('sync-toggle').addEventListener('click', () => { showSync=!showSync; render(); });
-  document.getElementById('token-save').addEventListener('click', () => {
-    const v = document.getElementById('token-input').value.trim();
-    if(!v) return;
-    sync.token = v; sync.gistId = ''; saveSyncConfig(); syncNow();
-  });
-  document.getElementById('sync-now-btn').addEventListener('click', syncNow);
-  const syncOff = document.getElementById('sync-off-btn');
-  if(syncOff) syncOff.addEventListener('click', () => { sync = { token:'', gistId:'' }; saveSyncConfig(); setSyncStatus('not connected'); render(); });
-
-  const exportBtn = document.getElementById('export-btn');
-  if(exportBtn) exportBtn.addEventListener('click', exportData);
-  const importBtn = document.getElementById('import-btn');
-  if(importBtn) importBtn.addEventListener('click', () => document.getElementById('import-file').click());
+  document.getElementById('refresh-btn').addEventListener('click', refresh);
+  document.getElementById('signout-btn').addEventListener('click', doSignOut);
+  document.getElementById('export-btn').addEventListener('click', exportData);
+  document.getElementById('import-btn').addEventListener('click', () => document.getElementById('import-file').click());
 
   const hint = document.getElementById('install-hint');
   if(deferredPrompt){
@@ -560,29 +575,35 @@ function render(){
   }
 }
 
+/*BOOT*/
 document.getElementById('import-file').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if(file) importDataFromFile(file);
   e.target.value = '';
 });
-
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault(); deferredPrompt = e;
   const hint = document.getElementById('install-hint');
   if(hint) hint.classList.add('show');
 });
-
 if('serviceWorker' in navigator){
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(()=>{}); });
 }
+document.addEventListener('visibilitychange', () => { if(document.visibilityState==='visible' && session) refresh(); });
 
-document.addEventListener('visibilitychange', () => { if(document.visibilityState==='visible') syncNow(); else flushSync(); });
-window.addEventListener('pagehide', flushSync);
-
-load();
-loadSyncConfig();
-render();
-syncNow();
+async function boot(){
+  if(!cfgOk()){ render(); return; }
+  sb = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY);
+  sb.auth.onAuthStateChange((evt, s) => {
+    session = s;
+    if(evt === 'SIGNED_OUT'){ data = blankData(); loaded = false; setTimeout(render, 0); }
+  });
+  const r = await sb.auth.getSession();
+  session = r.data.session;
+  render();
+  if(session) refresh();
+}
+boot();
 </script>
 </body>
 </html>

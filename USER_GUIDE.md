@@ -1,85 +1,80 @@
-# Daily Tracker — User Guide
+# Daily Tracker — Setup & User Guide
 
-A small, self-hosted app for tracking daily recurring tasks and building consistency over time. No account, no server — everything is saved in your browser.
-
-## 1. Installing it
-
-1. Unzip the app folder.
-2. Host it somewhere with HTTPS — the quickest way is dragging the folder into [Netlify Drop](https://app.netlify.com/drop), which gives you a live link immediately with no sign-up.
-3. Open that link on your phone in Chrome (Android).
-4. Tap **Install app** (shown in the app itself, or via Chrome's menu → *Add to Home screen*).
-5. It now sits on your home screen with its own icon and opens full-screen, like a normal app.
-
-You can also just open the link in a desktop browser and use it there — installing is optional, the app works the same either way.
-
-## 2. Adding your daily tasks
-
-On the **today** view, type a task into the box at the bottom and press **Add** (or hit Enter). These are the things you intend to do every day — they'll reappear each morning, unchecked.
-
-- Use the **▲ / ▼** buttons next to a task to reorder your list.
-- Use **remove** to take a task off your active list. This doesn't delete its history — see *Archiving* below.
-
-## 3. Checking things off
-
-Tap the checkbox or the task name to mark it done. Your percentage for the day (top right) updates immediately, and everything saves automatically — no save button needed.
-
-## 4. Viewing and editing past days
-
-- The grid near the bottom ("Last 12 weeks") is a history map: darker green = a fuller day.
-- **Click any day** to jump to it. You'll see exactly which tasks were done or missed that day.
-- **The last 7 days (including today) are editable** — so if you forgot to check something off yesterday, you can still fix it.
-- Anything older than 7 days is **read-only**, shown with a "read-only" badge, so your history stays honest rather than being rewritten after the fact.
-- Use **prev day / next day** to step through one day at a time, or **back to today** to jump home.
-
-## 5. Archiving tasks
-
-Removing a task doesn't erase it — it's archived instead, so past days that included it still show accurate history. Archived tasks are hidden from your daily list.
-
-- Click **show archived** (next to the task list, on today's view) to see them.
-- **Restore** brings a task back into your active list.
-- **Delete forever** permanently removes it and its name from history — use this only if you're sure.
-
-## 6. Streaks and stats
-
-- **Streak** — consecutive days you hit your completion threshold.
-- **Best** — your longest streak on record.
-- **7-day avg / 30-day avg** — your average completion percentage over recent weeks.
-
-### Settings (tap to expand)
-- **Streak threshold** — how much of your list counts as a "successful day" (default 80%). Adjustable from 50–100%.
-- **Grace day** — when enabled, one missed day per week doesn't break your streak. Real life happens; this keeps the streak from feeling punishing over one bad day. Turn it off if you want a strict, no-exceptions streak.
-
-## 7. Backing up your data
-
-Without sync, everything is stored only in this browser. That's good for privacy, but it means:
-
-- Clearing your browser data, reinstalling the app, or switching browsers/devices will **not** carry your history over automatically.
-- Open **Backup & restore** and click **Export backup** regularly (e.g. monthly) to download a `.json` file of everything.
-- To bring data back (a new device, or after clearing data), open **Backup & restore → Import backup** and select a previously exported file. This *replaces* whatever is currently in the app, so use it on a fresh install or when you're sure.
-
-## 8. Syncing between devices (optional, free)
-
-By default each browser keeps its own separate history. To use the same data on your phone and your computer, turn on sync. It stores your data in a **private GitHub Gist** on your own GitHub account, so it costs nothing and needs no server.
-
-**One-time setup**
-1. On GitHub, go to **Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic)**.
-2. Give it a name, tick **only the `gist` scope**, and generate it. Copy the token.
-3. In the app, open **Sync between devices**, paste the token, and press **Connect**.
-4. Repeat step 3 on every other device, using the same token (or a new one from the same account).
-
-**How it behaves**
-- Every change is pushed to the Gist a couple of seconds after you make it, and the app checks for newer data whenever you open it or return to the tab.
-- The first device creates the Gist; other devices find it automatically.
-- The newest change wins. Avoid editing on two devices at the exact same moment, and open the app once on a device before editing so it pulls the latest data first.
-- The app still works offline. It saves locally first and syncs when you are back online.
-- **Disconnect** removes the token from that device. It does not delete the Gist or your local data.
-- The token is stored in that browser only and is never included in exported backups. Treat it like a password, and revoke it on GitHub if a device is lost.
-
-## 9. Troubleshooting
-
-- **"Install app" doesn't appear** — some browsers/OS combinations don't support installable web apps, or you've already installed it. You can always just use it as a regular browser tab.
-- **My history disappeared** — most likely the browser's site data was cleared (e.g. "Clear browsing data", private/incognito mode, or an uninstall). Restore from your latest export if you have one.
-- **A task looks wrong in an old day** — if you edited a task's name, name changes apply going forward and won't rewrite old days. This is expected — think of it as it recording what existed at the time.
+A personal daily-task tracker. The app is a static website (hosted on GitHub Pages) that reads and writes your data in your own free Supabase database, so it is the same on every device. You need an internet connection to use it.
 
 ---
-The app runs on your device. Data leaves it only if you turn on sync, and then it goes only to your own private Gist.
+
+## Part 1 — One-time setup
+
+### 1. Create the database (Supabase, free)
+1. Go to **supabase.com** and sign up (signing in with GitHub is fine).
+2. Click **New project**. Pick a name (e.g. `daily-tracker`), choose a **database password** (generate one and save it in your password manager — the app never uses it), pick the region closest to you (e.g. *Central EU / Frankfurt*), and choose the **Free** plan.
+3. Wait about two minutes until the project is ready.
+
+### 2. Create the tables
+1. In the left menu open **SQL Editor → New query**.
+2. Open `supabase-setup.sql` from this folder, copy everything into the editor, and click **Run**.
+3. You should see *Success. No rows returned*. Under **Table Editor** you will now see `tasks`, `completions` and `settings`, each marked with RLS (row-level security) enabled.
+
+### 3. Create your login
+1. Go to **Authentication → Users → Add user → Create new user**.
+2. Enter your email and a strong password, and tick **Auto Confirm User**.
+
+### 4. Switch off public sign-ups
+Go to **Authentication → Sign In / Providers** (on some versions: **Authentication → Settings**) and turn **off** *Allow new users to sign up*, then save. Now only the account you created can log in.
+
+### 5. Copy your project keys
+Open **Project Settings → API** (or the **Connect** button at the top of the dashboard) and copy:
+- the **Project URL** (looks like `https://abcdefgh.supabase.co`)
+- the **anon / publishable key**
+
+Never use the *service_role* / *secret* key in this app.
+
+### 6. Put the keys into the app
+Open `config.js` and replace the two placeholder values with your URL and key. Both are meant to be public: without your login they give access to nothing, because every table is protected by row-level security.
+
+### 7. Publish on GitHub Pages
+Replace the files in your repo with the files from this folder (`index.html`, `sw.js`, `config.js`, `supabase.js`, `manifest.json`, the icons) and push:
+
+```bash
+git add .
+git commit -m "Switch to Supabase"
+git push
+```
+
+Wait a few minutes, open your site, hard-refresh (Ctrl+Shift+R, or close and reopen the app on your phone), and sign in with the account from step 3. The Account panel shows **app version 6** when you have the new version.
+
+### 8. Install on Android (optional)
+Open the site in Chrome and tap **Install app** (or Chrome menu → *Add to Home screen*).
+
+### 9. Clean up the old sync (if you used it)
+The old GitHub Gist sync is gone. You can delete the private Gist named `daily-tracker.json` and revoke the GitHub token you created for it (GitHub → Settings → Developer settings → Personal access tokens).
+
+---
+
+## Part 2 — Using the app
+
+**Tasks.** Add a daily task at the bottom of today's view. It appears every day from the day you added it. Use ▲ / ▼ to reorder and **remove** to retire a task.
+
+**Checking off.** Tap a task. The percentage at the top updates, and the change is saved to the database straight away. The status line under *Account* shows "saved at …". If a save fails, it says **NOT saved** and the screen reloads from the database, so you never see something that was not stored.
+
+**Past days.** Click any square in the 12-week grid, or use *prev day / next day*. The last 7 days (including today) are editable; older days are read-only. A task only counts on days from when it was created, so adding a task later never lowers your earlier days.
+
+**Removing vs deleting.** *Remove* archives a task: it stops counting from that day on, and its history stays. *Show archived* lets you **restore** it or **delete forever** (which erases its history too).
+
+**Streaks and averages.** A day counts toward your streak when you complete at least your threshold of tasks (default 80%). With the grace day on, one missed day per week does not break the streak. Change both under **Settings**. The 7-day and 30-day averages show your real completion.
+
+**Several devices.** Everything lives in the database, so every device shows the same data. The app reloads from the database whenever you return to it. Use *Account → Refresh from database* to force it.
+
+**Backups.** *Backup & restore → Export backup* downloads a `.json` copy of your data. *Import backup* adds tasks and history from a backup file, including backups from the older single-browser version of this app.
+
+---
+
+## Troubleshooting
+
+- **"Invalid login credentials"** — check the email and password from step 3. If you created the user without *Auto Confirm User*, open the user in Authentication → Users and confirm it.
+- **"setup needed" screen** — `config.js` still has the placeholder values.
+- **"NOT saved" / permission or "row-level security" errors** — the SQL script from step 2 did not run completely. Run it again; it is safe to repeat.
+- **Still on an old version** — hard-refresh, or close and reopen the installed app. GitHub Pages can take a few minutes to publish.
+- **Project paused** — free Supabase projects may pause after a period of inactivity. Using the app regularly avoids this; if it happens, open the project in the Supabase dashboard and resume it. Check Supabase's current free-plan terms for details.
+- **Forgot the password** — reset it in Supabase under Authentication → Users.
