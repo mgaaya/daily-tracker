@@ -137,7 +137,7 @@ function loadSyncConfig(){ try{ const raw=localStorage.getItem('daily-tracker-sy
 function saveSyncConfig(){ localStorage.setItem('daily-tracker-sync', JSON.stringify(sync)); }
 function ghFetch(path, opts){
   opts = opts || {};
-  return fetch('https://api.github.com'+path, Object.assign({}, opts, { headers:{ 'Authorization':'Bearer '+sync.token, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json' } }));
+  return fetch('https://api.github.com'+path, Object.assign({ cache:'no-store' }, opts, { headers:{ 'Authorization':'Bearer '+sync.token, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json' } }));
 }
 async function findGist(){
   for(let page=1; page<=5; page++){
@@ -179,25 +179,41 @@ function setSyncStatus(msg){
 function scheduleSync(){
   if(!sync.token) return;
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(syncNow, 2000);
+  syncTimer = setTimeout(() => { syncTimer = null; syncNow(); }, 2000);
 }
 async function syncNow(){
   if(!sync.token) return;
+  clearTimeout(syncTimer); syncTimer = null;
   setSyncStatus('syncing…');
   try{
+    let remoteTs = -1;
     if(!sync.gistId){ sync.gistId = (await findGist()) || ''; saveSyncConfig(); }
     if(sync.gistId){
       const remote = await pullGist();
-      if(remote && remote.tasks && (remote.updatedAt||0) > (data.updatedAt||0)){
-        data = normalize(remote);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        setSyncStatus('pulled newer data at '+new Date().toLocaleTimeString());
-        render(); return;
+      if(remote && remote.tasks){
+        remoteTs = remote.updatedAt || 0;
+        if(remoteTs > (data.updatedAt || 0)){
+          data = normalize(remote);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+          setSyncStatus('pulled newer data at '+new Date().toLocaleTimeString());
+          render(); return;
+        }
       }
     }
-    await pushGist();
-    setSyncStatus('synced at '+new Date().toLocaleTimeString());
+    if((data.updatedAt || 0) > remoteTs){
+      await pushGist();
+      setSyncStatus('pushed at '+new Date().toLocaleTimeString());
+    } else {
+      setSyncStatus('up to date at '+new Date().toLocaleTimeString());
+    }
   }catch(e){ setSyncStatus('sync failed: '+e.message); }
+}
+function flushSync(){
+  if(!sync.token || !sync.gistId || !syncTimer) return;
+  clearTimeout(syncTimer); syncTimer = null;
+  try{
+    ghFetch('/gists/'+sync.gistId, { method:'PATCH', keepalive:true, body: JSON.stringify({ files:{ [GIST_FILE]:{ content: JSON.stringify(data) } } }) });
+  }catch(e){}
 }
 
 function activeTasks(){ return data.tasks.filter(t=>!t.archived).sort((a,b)=>a.order-b.order); }
@@ -560,7 +576,8 @@ if('serviceWorker' in navigator){
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(()=>{}); });
 }
 
-document.addEventListener('visibilitychange', () => { if(document.visibilityState==='visible') syncNow(); });
+document.addEventListener('visibilitychange', () => { if(document.visibilityState==='visible') syncNow(); else flushSync(); });
+window.addEventListener('pagehide', flushSync);
 
 load();
 loadSyncConfig();
