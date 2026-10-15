@@ -51,15 +51,29 @@ Removing a task doesn't erase it — it's archived instead, so past days that in
 
 ## 7. Backing up your data
 
-Everything is stored only in this browser — nothing is sent anywhere. That's good for privacy, but it means:
+Without sync, everything is stored only in this browser. That's good for privacy, but it means:
 
 - Clearing your browser data, reinstalling the app, or switching browsers/devices will **not** carry your history over automatically.
 - Open **Backup & restore** and click **Export backup** regularly (e.g. monthly) to download a `.json` file of everything.
 - To bring data back (a new device, or after clearing data), open **Backup & restore → Import backup** and select a previously exported file. This *replaces* whatever is currently in the app, so use it on a fresh install or when you're sure.
 
-## 8. Using it on multiple devices
+## 8. Syncing between devices (optional, free)
 
-Because data lives in the browser, your phone install and a desktop browser won't sync with each other automatically — each keeps its own separate history. If you want them to match, export from one and import into the other. True automatic syncing across devices would need a small backend server, which isn't part of this version.
+By default each browser keeps its own separate history. To use the same data on your phone and your computer, turn on sync. It stores your data in a **private GitHub Gist** on your own GitHub account, so it costs nothing and needs no server.
+
+**One-time setup**
+1. On GitHub, go to **Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic)**.
+2. Give it a name, tick **only the `gist` scope**, and generate it. Copy the token.
+3. In the app, open **Sync between devices**, paste the token, and press **Connect**.
+4. Repeat step 3 on every other device, using the same token (or a new one from the same account).
+
+**How it behaves**
+- Every change is pushed to the Gist a couple of seconds after you make it, and the app checks for newer data whenever you open it or return to the tab.
+- The first device creates the Gist; other devices find it automatically.
+- The newest change wins. Avoid editing on two devices at the exact same moment, and open the app once on a device before editing so it pulls the latest data first.
+- The app still works offline. It saves locally first and syncs when you are back online.
+- **Disconnect** removes the token from that device. It does not delete the Gist or your local data.
+- The token is stored in that browser only and is never included in exported backups. Treat it like a password, and revoke it on GitHub if a device is lost.
 
 ## 9. Troubleshooting
 
@@ -68,4 +82,4 @@ Because data lives in the browser, your phone install and a desktop browser won'
 - **A task looks wrong in an old day** — if you edited a task's name, name changes apply going forward and won't rewrite old days. This is expected — think of it as it recording what existed at the time.
 
 ---
-Everything in this app runs entirely on your device — there's no login and no data collection.
+The app runs on your device. Data leaves it only if you turn on sync, and then it goes only to your own private Gist.

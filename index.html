@@ -92,7 +92,12 @@
 
 <script>
 const STORAGE_KEY = 'daily-tracker-data';
-let data = { tasks: [], completions: {}, settings: { threshold: 0.8, graceDay: true } };
+let data = { tasks: [], completions: {}, settings: { threshold: 0.8, graceDay: true }, updatedAt: 0 };
+let showSync = false;
+let sync = { token:'', gistId:'' };
+let syncStatus = '';
+let syncTimer = null;
+const GIST_FILE = 'daily-tracker.json';
 let viewingDate = todayKey();
 let showArchived = false;
 let showSettings = false;
@@ -107,21 +112,92 @@ function daysBetween(key1, key2){ return Math.round((parseKey(key2)-parseKey(key
 function dateLabelFor(key){ return parseKey(key).toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'}); }
 function isEditable(key){ const diff = daysBetween(key, todayKey()); return diff>=0 && diff<=6; }
 
+function normalize(d){
+  if(!d.tasks) d.tasks = [];
+  if(!d.completions) d.completions = {};
+  if(!d.settings) d.settings = { threshold: 0.8, graceDay: true };
+  if(!d.updatedAt) d.updatedAt = 0;
+  d.tasks.forEach((t,i) => { if(t.order===undefined) t.order = i; if(t.archived===undefined) t.archived=false; });
+  return d;
+}
 function load(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw){
-      data = JSON.parse(raw);
-      if(!data.tasks) data.tasks = [];
-      if(!data.completions) data.completions = {};
-      if(!data.settings) data.settings = { threshold: 0.8, graceDay: true };
-      data.tasks.forEach((t,i) => { if(t.order===undefined) t.order = i; if(t.archived===undefined) t.archived=false; });
-    }
+    if(raw){ data = normalize(JSON.parse(raw)); }
   }catch(e){}
 }
 function save(){
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); lastSavedAt = new Date(); }
+  try{ data.updatedAt = Date.now(); localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); lastSavedAt = new Date(); }
   catch(e){ console.error(e); }
+  scheduleSync();
+}
+
+/* ---------- Sync via private GitHub Gist ---------- */
+function loadSyncConfig(){ try{ const raw=localStorage.getItem('daily-tracker-sync'); if(raw) sync=JSON.parse(raw); }catch(e){} }
+function saveSyncConfig(){ localStorage.setItem('daily-tracker-sync', JSON.stringify(sync)); }
+function ghFetch(path, opts){
+  opts = opts || {};
+  return fetch('https://api.github.com'+path, Object.assign({}, opts, { headers:{ 'Authorization':'Bearer '+sync.token, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json' } }));
+}
+async function findGist(){
+  for(let page=1; page<=5; page++){
+    const r = await ghFetch('/gists?per_page=100&page='+page);
+    if(!r.ok) throw new Error('GitHub '+r.status);
+    const list = await r.json();
+    const g = list.find(g => g.files && g.files[GIST_FILE]);
+    if(g) return g.id;
+    if(list.length < 100) break;
+  }
+  return null;
+}
+async function pullGist(){
+  const r = await ghFetch('/gists/'+sync.gistId);
+  if(!r.ok) throw new Error('GitHub '+r.status);
+  const g = await r.json();
+  const f = g.files && g.files[GIST_FILE];
+  if(!f) return null;
+  let content = f.content;
+  if(f.truncated){ content = await (await fetch(f.raw_url)).text(); }
+  return JSON.parse(content);
+}
+async function pushGist(){
+  const content = JSON.stringify(data);
+  if(sync.gistId){
+    const r = await ghFetch('/gists/'+sync.gistId, { method:'PATCH', body: JSON.stringify({ files:{ [GIST_FILE]:{ content } } }) });
+    if(!r.ok) throw new Error('GitHub '+r.status);
+  } else {
+    const r = await ghFetch('/gists', { method:'POST', body: JSON.stringify({ description:'Daily Tracker data', public:false, files:{ [GIST_FILE]:{ content } } }) });
+    if(!r.ok) throw new Error('GitHub '+r.status);
+    sync.gistId = (await r.json()).id; saveSyncConfig();
+  }
+}
+function setSyncStatus(msg){
+  syncStatus = msg;
+  const el = document.getElementById('sync-status');
+  if(el) el.textContent = msg;
+}
+function scheduleSync(){
+  if(!sync.token) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, 2000);
+}
+async function syncNow(){
+  if(!sync.token) return;
+  setSyncStatus('syncing…');
+  try{
+    if(!sync.gistId){ sync.gistId = (await findGist()) || ''; saveSyncConfig(); }
+    if(sync.gistId){
+      const remote = await pullGist();
+      if(remote && remote.tasks && (remote.updatedAt||0) > (data.updatedAt||0)){
+        data = normalize(remote);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        setSyncStatus('pulled newer data at '+new Date().toLocaleTimeString());
+        render(); return;
+      }
+    }
+    await pushGist();
+    setSyncStatus('synced at '+new Date().toLocaleTimeString());
+  }catch(e){ setSyncStatus('sync failed: '+e.message); }
 }
 
 function activeTasks(){ return data.tasks.filter(t=>!t.archived).sort((a,b)=>a.order-b.order); }
@@ -373,6 +449,25 @@ function render(){
     </div>
 
     <div class="panel">
+      <div class="panel-toggle" id="sync-toggle">
+        <p class="section-label">Sync between devices</p>
+        <span style="color:var(--text-dim);font-size:0.8rem;">${showSync?'▲':'▼'}</span>
+      </div>
+      <div class="panel-body" style="${showSync?'':'display:none'}">
+        <div>Syncs your data through a private GitHub Gist on your account. Paste a GitHub token (classic, with only the <b>gist</b> scope) on each device.</div>
+        <div class="add-row" style="padding-left:0;padding-right:0;">
+          <input type="password" id="token-input" placeholder="GitHub token" value="${escapeHtml(sync.token)}" autocomplete="off">
+          <button id="token-save">${sync.token?'Update':'Connect'}</button>
+        </div>
+        <div class="backup-row">
+          <button id="sync-now-btn">Sync now</button>
+          ${sync.token?'<button id="sync-off-btn">Disconnect</button>':''}
+        </div>
+        <div class="saved-note" id="sync-status">${escapeHtml(syncStatus || (sync.token?'connected':'not connected'))}</div>
+      </div>
+    </div>
+
+    <div class="panel">
       <div class="panel-toggle" id="backup-toggle">
         <p class="section-label">Backup &amp; restore</p>
         <span style="color:var(--text-dim);font-size:0.8rem;">${showBackup?'▲':'▼'}</span>
@@ -425,6 +520,16 @@ function render(){
   const graceInput = document.getElementById('grace-input');
   if(graceInput) graceInput.addEventListener('change', (e) => { data.settings.graceDay = e.target.checked; save(); render(); });
 
+  document.getElementById('sync-toggle').addEventListener('click', () => { showSync=!showSync; render(); });
+  document.getElementById('token-save').addEventListener('click', () => {
+    const v = document.getElementById('token-input').value.trim();
+    if(!v) return;
+    sync.token = v; sync.gistId = ''; saveSyncConfig(); syncNow();
+  });
+  document.getElementById('sync-now-btn').addEventListener('click', syncNow);
+  const syncOff = document.getElementById('sync-off-btn');
+  if(syncOff) syncOff.addEventListener('click', () => { sync = { token:'', gistId:'' }; saveSyncConfig(); setSyncStatus('not connected'); render(); });
+
   const exportBtn = document.getElementById('export-btn');
   if(exportBtn) exportBtn.addEventListener('click', exportData);
   const importBtn = document.getElementById('import-btn');
@@ -455,8 +560,12 @@ if('serviceWorker' in navigator){
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(()=>{}); });
 }
 
+document.addEventListener('visibilitychange', () => { if(document.visibilityState==='visible') syncNow(); });
+
 load();
+loadSyncConfig();
 render();
+syncNow();
 </script>
 </body>
 </html>
